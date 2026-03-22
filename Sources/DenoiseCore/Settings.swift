@@ -4,7 +4,7 @@ import Foundation
 public struct DenoiseSettings: Codable {
     public var inputDeviceUID: String?
     public var noiseGateEnabled: Bool = true
-    public var noiseGateThreshold: Float = -40.0
+    public var noiseGateThreshold: Float = -45.0
     public var eqEnabled: Bool = true
     public var eqLowGain: Float = 0.0
     public var eqMidGain: Float = 0.0

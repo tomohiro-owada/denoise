@@ -70,7 +70,7 @@ public final class AudioProcessor: ObservableObject {
     @Published public var noiseGateEnabled: Bool = true {
         didSet { noiseGate.isEnabled = noiseGateEnabled }
     }
-    @Published public var noiseGateThreshold: Float = -40.0 {
+    @Published public var noiseGateThreshold: Float = -45.0 {
         didSet { noiseGate.thresholdDB = noiseGateThreshold }
     }
     @Published public var eqEnabled: Bool = true

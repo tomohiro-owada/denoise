@@ -24,33 +24,30 @@ struct MenuBarView: View {
 
             Divider()
 
-            // Power toggle
-            Button(action: {
+            // Processing toggle
+            HStack {
+                Label("Processing", systemImage: processor.isRunning ? "power.circle.fill" : "power.circle")
+                    .font(.headline)
+                Spacer()
                 if processor.isRunning {
-                    print("[GUI] stop")
-                    processor.stop()
-                } else {
-                    print("[GUI] start (monitor=\(monitorMode))")
-                    startProcessing()
+                    Text(processor.isMonitorMode ? "Monitor" : "Denoise")
+                        .foregroundColor(processor.isMonitorMode ? .orange : .green)
+                        .font(.caption)
                 }
-                saveSettings()
-            }) {
-                HStack {
-                    Label("Processing", systemImage: processor.isRunning ? "power.circle.fill" : "power.circle")
-                        .font(.headline)
-                    Spacer()
-                    if processor.isRunning {
-                        Text(processor.isMonitorMode ? "Monitor" : "BlackHole")
-                            .foregroundColor(processor.isMonitorMode ? .orange : .green)
-                            .font(.caption)
-                    } else {
-                        Text("OFF")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
+                Toggle("", isOn: Binding(
+                    get: { processor.isRunning },
+                    set: { on in
+                        if on {
+                            startProcessing()
+                        } else {
+                            processor.stop()
+                        }
+                        saveSettings()
                     }
-                }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
             }
-            .buttonStyle(.plain)
 
             // Monitor mode toggle
             Toggle(isOn: $monitorMode) {
@@ -62,6 +59,22 @@ struct MenuBarView: View {
                 if processor.isRunning {
                     startProcessing()
                 }
+            }
+
+            if monitorMode {
+                HStack {
+                    Text("Delay")
+                    Slider(value: $processor.monitorDelaySeconds, in: 0...10, step: 0.5)
+                    Text("\(String(format: "%.1f", processor.monitorDelaySeconds))s")
+                        .frame(width: 35)
+                    Button("Apply") {
+                        if processor.isRunning {
+                            startProcessing()
+                        }
+                    }
+                    .font(.caption2)
+                }
+                .font(.caption)
             }
 
             // Input device
@@ -90,7 +103,7 @@ struct MenuBarView: View {
                     .onChange(of: processor.noiseGateEnabled) { _, _ in saveSettings() }
                 HStack {
                     Text("Threshold")
-                    Slider(value: $processor.noiseGateThreshold, in: -80...0)
+                    Slider(value: $processor.noiseGateThreshold, in: -90...0)
                     Text("\(Int(processor.noiseGateThreshold)) dB")
                         .frame(width: 50)
                 }
@@ -182,10 +195,8 @@ struct MenuBarView: View {
     }
 
     private func startProcessing() {
-        let devices = VirtualDeviceInstaller.findInputDevices()
-        let deviceID = devices.first(where: { $0.uid == selectedDeviceUID })?.id
         do {
-            try processor.start(inputDeviceID: deviceID, monitor: monitorMode)
+            try processor.start(monitor: monitorMode)
         } catch {
             NSLog("Denoise start failed: \(error)")
         }
