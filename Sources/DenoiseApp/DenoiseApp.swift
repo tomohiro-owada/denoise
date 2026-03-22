@@ -27,10 +27,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = DenoiseSettings.load()
         settings.apply(to: processor)
 
-        // Setup menu bar
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Set app icon
+        if let icnsURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns", subdirectory: "Resources") {
+            NSApp.applicationIconImage = NSImage(contentsOf: icnsURL)
+        }
+
+        // Setup menu bar with custom icon
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "mic.badge.plus", accessibilityDescription: "Denoise")
+            if let iconURL = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png", subdirectory: "Resources") {
+                let img = NSImage(contentsOf: iconURL)
+                img?.isTemplate = true  // Adapts to light/dark menu bar
+                img?.size = NSSize(width: 18, height: 18)
+                button.image = img
+            } else {
+                button.image = NSImage(systemSymbolName: "mic.badge.plus", accessibilityDescription: "Denoise")
+            }
             button.action = #selector(togglePopover)
             button.target = self
         }

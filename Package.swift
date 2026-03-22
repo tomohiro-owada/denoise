@@ -32,7 +32,8 @@ let package = Package(
         .executableTarget(
             name: "DenoiseApp",
             dependencies: ["DenoiseCore"],
-            path: "Sources/DenoiseApp"
+            path: "Sources/DenoiseApp",
+            resources: [.copy("../../Resources")]
         ),
         .executableTarget(
             name: "DenoiseCLI",
