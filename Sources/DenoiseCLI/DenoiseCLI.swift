@@ -94,7 +94,10 @@ struct Status: ParsableCommand {
 }
 
 struct Config: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Set a configuration value")
+    static let configuration = CommandConfiguration(
+        abstract: "Set a configuration value",
+        discussion: "For negative values: denoise config -- noise-gate-threshold -40"
+    )
 
     @Argument(help: "Config key (e.g. noise-gate-threshold, eq-low, compressor-ratio, rnnoise-enabled)")
     var key: String

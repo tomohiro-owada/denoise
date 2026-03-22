@@ -116,6 +116,10 @@ final class IPCServer {
         let value = parts[1]
 
         switch key {
+        case "declicker-enabled":
+            processor.deClickerEnabled = (value == "true" || value == "1")
+        case "declicker-sensitivity":
+            if let v = Float(value) { processor.deClickerSensitivity = v }
         case "noise-gate-enabled":
             processor.noiseGateEnabled = (value == "true" || value == "1")
         case "noise-gate-threshold":

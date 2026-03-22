@@ -53,6 +53,7 @@ public final class AudioProcessor: ObservableObject {
     private var sourceNode: AVAudioSourceNode!
     private var delayNode: AVAudioUnitDelay!
     private var ringBuffer: AudioRingBuffer!
+    private let deClicker = DeClicker()
     private let noiseGate = NoiseGate()
     private let rnnoise = RNNoiseProcessor()
 
@@ -62,6 +63,12 @@ public final class AudioProcessor: ObservableObject {
     @Published public var outputLevel: Float = 0.0
 
     // Settings
+    @Published public var deClickerEnabled: Bool = true {
+        didSet { deClicker.isEnabled = deClickerEnabled }
+    }
+    @Published public var deClickerSensitivity: Float = 4.0 {
+        didSet { deClicker.sensitivity = deClickerSensitivity }
+    }
     @Published public var noiseGateEnabled: Bool = true {
         didSet { noiseGate.isEnabled = noiseGateEnabled }
     }
@@ -112,10 +119,16 @@ public final class AudioProcessor: ObservableObject {
 
     private func setupCompressorParams() {
         let au = compressor.audioUnit
+        // Apple DynamicsProcessor: headRoom = how much dB above threshold before hard limiting
+        // Smaller headRoom = more aggressive compression
+        // Convert ratio to headRoom: headRoom ≈ abs(threshold) / ratio
+        let headRoom = max(0.1, abs(compressorThreshold) / max(compressorRatio, 1.0))
         AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, compressorThreshold, 0)
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom, kAudioUnitScope_Global, 0, max(0.1, 20.0 - compressorRatio), 0)
+        AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom, kAudioUnitScope_Global, 0, headRoom, 0)
+        AudioUnitSetParameter(au, kDynamicsProcessorParam_ExpansionRatio, kAudioUnitScope_Global, 0, 2.0, 0)
         AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime, kAudioUnitScope_Global, 0, 0.001, 0)
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime, kAudioUnitScope_Global, 0, 0.1, 0)
+        AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime, kAudioUnitScope_Global, 0, 0.05, 0)
+        AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, 5.0, 0)
         compressor.bypass = !compressorEnabled
     }
 
@@ -130,8 +143,10 @@ public final class AudioProcessor: ObservableObject {
     public func updateCompressor() {
         guard let compressor = compressor else { return }
         let au = compressor.audioUnit
+        let headRoom = max(0.1, abs(compressorThreshold) / max(compressorRatio, 1.0))
         AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, compressorThreshold, 0)
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom, kAudioUnitScope_Global, 0, max(0.1, 20.0 - compressorRatio), 0)
+        AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom, kAudioUnitScope_Global, 0, headRoom, 0)
+        AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, 5.0, 0)
         compressor.bypass = !compressorEnabled
     }
 
@@ -183,7 +198,7 @@ public final class AudioProcessor: ObservableObject {
             let ablPointer = UnsafeMutableAudioBufferListPointer(bufferList)
             for buf in ablPointer {
                 let ptr = buf.mData!.assumingMemoryBound(to: Float.self)
-                rb.read(ptr, count: Int(frameCount))
+                _ = rb.read(ptr, count: Int(frameCount))
             }
             return noErr
         }
@@ -218,7 +233,8 @@ public final class AudioProcessor: ObservableObject {
             engine.connect(compressor, to: engine.mainMixerNode, format: processingFormat)
         }
 
-        // Install tap on inputNode: capture → process → ring buffer
+        // Install tap on inputNode: capture → DeClicker → NoiseGate → RNNoise → ring buffer
+        let deClicker = self.deClicker
         let noiseGate = self.noiseGate
         let rnnoise = self.rnnoise
         let frameSize = self.rnnoiseFrameSize
@@ -258,6 +274,13 @@ public final class AudioProcessor: ObservableObject {
             vDSP_measqv(mono, 1, &rms, vDSP_Length(frameCount))
             rms = sqrtf(rms)
             DispatchQueue.main.async { self.inputLevel = rms }
+
+            // DeClicker (in-place) — remove clicks/pops BEFORE other processing
+            if self.deClickerEnabled {
+                mono.withUnsafeMutableBufferPointer { ptr in
+                    deClicker.process(ptr.baseAddress!, frameCount: frameCount)
+                }
+            }
 
             // Noise gate (in-place)
             if self.noiseGateEnabled {
@@ -363,6 +386,10 @@ public final class AudioProcessor: ObservableObject {
         return [
             "isRunning": isRunning,
             "isMonitorMode": isMonitorMode,
+            "deClicker": [
+                "enabled": deClickerEnabled,
+                "sensitivity": deClickerSensitivity,
+            ],
             "noiseGate": [
                 "enabled": noiseGateEnabled,
                 "threshold": noiseGateThreshold,
