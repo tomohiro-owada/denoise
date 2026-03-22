@@ -11,13 +11,22 @@ public struct InputDevice: Identifiable {
 /// Manages BlackHole virtual audio device installation and discovery
 public enum VirtualDeviceInstaller {
     private static let halPluginPath = "/Library/Audio/Plug-Ins/HAL"
+    private static let denoiseDriverName = "Denoise.driver"
     private static let blackHoleDriverName = "BlackHole2ch.driver"
-    private static let blackHoleUID = "BlackHole2ch_UID"
 
     public static var isInstalled: Bool {
-        FileManager.default.fileExists(
-            atPath: "\(halPluginPath)/\(blackHoleDriverName)"
-        )
+        FileManager.default.fileExists(atPath: "\(halPluginPath)/\(denoiseDriverName)")
+        || FileManager.default.fileExists(atPath: "\(halPluginPath)/\(blackHoleDriverName)")
+    }
+
+    public static var installedDriverName: String? {
+        if FileManager.default.fileExists(atPath: "\(halPluginPath)/\(denoiseDriverName)") {
+            return "Denoise"
+        }
+        if FileManager.default.fileExists(atPath: "\(halPluginPath)/\(blackHoleDriverName)") {
+            return "BlackHole"
+        }
+        return nil
     }
 
     /// Find the BlackHole virtual device AudioDeviceID
@@ -43,12 +52,19 @@ public enum VirtualDeviceInstaller {
         )
         guard status == noErr else { return nil }
 
+        // Prefer Denoise driver, fall back to BlackHole
+        var blackHoleID: AudioDeviceID?
         for device in devices {
-            if let uid = getDeviceUID(device), uid.contains("BlackHole") {
-                return device
+            if let name = getDeviceName(device) {
+                if name.contains("Denoise") {
+                    return device  // Denoise takes priority
+                }
+                if name.contains("BlackHole") {
+                    blackHoleID = device
+                }
             }
         }
-        return nil
+        return blackHoleID
     }
 
     /// Find input (microphone) devices
@@ -96,7 +112,7 @@ public enum VirtualDeviceInstaller {
 
             if let name = getDeviceName(device), let uid = getDeviceUID(device) {
                 // Skip BlackHole itself as an input source
-                if uid.contains("BlackHole") { continue }
+                if uid.contains("BlackHole") || name.contains("Denoise") { continue }
                 result.append(InputDevice(id: device, name: name, uid: uid))
             }
         }
