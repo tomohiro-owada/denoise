@@ -11,7 +11,7 @@ public final class DeClicker: @unchecked Sendable {
     /// Smoothing factor for the running envelope (0-1, lower = slower tracking)
     private let envelopeAlpha: Float = 0.001
 
-    private var envelope: Float = 0.0
+    private var envelope: Float = -1.0  // -1 = uninitialized
 
     public init(sensitivity: Float = 4.0) {
         self.sensitivity = sensitivity
@@ -20,6 +20,11 @@ public final class DeClicker: @unchecked Sendable {
     /// Process audio buffer in-place, replacing detected clicks with interpolation
     public func process(_ buffer: UnsafeMutablePointer<Float>, frameCount: Int) {
         guard isEnabled, frameCount > 0 else { return }
+
+        // Initialize envelope from first sample to avoid false positives on startup
+        if envelope < 0 {
+            envelope = fabsf(buffer[0])
+        }
 
         // First pass: update envelope and detect click regions
         var clickMask = [Bool](repeating: false, count: frameCount)

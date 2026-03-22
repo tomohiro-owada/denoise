@@ -149,11 +149,12 @@ struct MenuBarView: View {
 
             Divider()
 
-            // BlackHole status
+            // Virtual device status
             HStack {
-                Image(systemName: VirtualDeviceInstaller.isInstalled ? "checkmark.circle.fill" : "exclamationmark.triangle")
-                    .foregroundColor(VirtualDeviceInstaller.isInstalled ? .green : .orange)
-                Text(VirtualDeviceInstaller.isInstalled ? "BlackHole installed" : "BlackHole not found")
+                let driverName = VirtualDeviceInstaller.installedDriverName
+                Image(systemName: driverName != nil ? "checkmark.circle.fill" : "exclamationmark.triangle")
+                    .foregroundColor(driverName != nil ? .green : .orange)
+                Text(driverName.map { "\($0) installed" } ?? "Virtual device not found")
                     .font(.caption)
             }
 

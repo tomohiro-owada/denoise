@@ -119,13 +119,8 @@ public final class AudioProcessor: ObservableObject {
     }
 
     public func updateCompressor() {
-        guard let compressor = compressor else { return }
-        let au = compressor.audioUnit
-        let headRoom = max(0.1, abs(compressorThreshold) / max(compressorRatio, 1.0))
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, compressorThreshold, 0)
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom, kAudioUnitScope_Global, 0, headRoom, 0)
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, 5.0, 0)
-        compressor.bypass = !compressorEnabled
+        guard compressor != nil else { return }
+        setupCompressorParams()
     }
 
     // MARK: - Start / Stop
@@ -288,19 +283,30 @@ public final class AudioProcessor: ObservableObject {
     }
 
     private func applyRNNoise(_ mono: inout [Float], rnnoise: RNNoiseProcessor, frameSize: Int) {
+        // Accumulate into persistent buffer (scaled to RNNoise range)
         for i in 0..<mono.count {
             rnnoiseBuffer.append(mono[i] * 32768.0)
         }
-        var outputOffset = 0
-        while rnnoiseBuffer.count >= frameSize && outputOffset < mono.count {
+
+        // Process complete frames and collect output
+        var processed = [Float]()
+        processed.reserveCapacity(mono.count)
+        while rnnoiseBuffer.count >= frameSize {
             var frame = Array(rnnoiseBuffer.prefix(frameSize))
             rnnoiseBuffer.removeFirst(frameSize)
             rnnoise.processFrame(&frame)
-            let samplesToWrite = min(frameSize, mono.count - outputOffset)
-            for j in 0..<samplesToWrite {
-                mono[outputOffset + j] = frame[j] / 32768.0
+            for j in 0..<frameSize {
+                processed.append(frame[j] / 32768.0)
             }
-            outputOffset += samplesToWrite
+        }
+
+        // Write processed samples back; zero any remainder (don't leak raw audio)
+        for i in 0..<mono.count {
+            if i < processed.count {
+                mono[i] = processed[i]
+            } else {
+                mono[i] = 0
+            }
         }
     }
 

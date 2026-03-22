@@ -73,45 +73,62 @@ final class IPCServer {
         }
     }
 
+    private func jsonResponse(ok: Bool, message: String? = nil, error: String? = nil) -> String {
+        var dict: [String: Any] = ["ok": ok]
+        if let m = message { dict["message"] = m }
+        if let e = error { dict["error"] = e }
+        if let data = try? JSONSerialization.data(withJSONObject: dict, options: []),
+           let json = String(data: data, encoding: .utf8) {
+            return json + "\n"
+        }
+        return "{\"ok\":false,\"error\":\"serialization failed\"}\n"
+    }
+
     private func processCommand(_ command: String) -> String {
-        guard let processor = processor else { return "ERROR: not initialized\n" }
+        guard let processor = processor else {
+            return jsonResponse(ok: false, error: "not initialized")
+        }
         let parts = command.split(separator: " ").map(String.init)
-        guard let cmd = parts.first else { return "ERROR: empty command\n" }
+        guard let cmd = parts.first else {
+            return jsonResponse(ok: false, error: "empty command")
+        }
 
         switch cmd {
         case "start":
             do {
                 try processor.start()
-                return "OK: processing started\n"
+                return jsonResponse(ok: true, message: "processing started")
             } catch {
-                return "ERROR: \(error.localizedDescription)\n"
+                return jsonResponse(ok: false, error: error.localizedDescription)
             }
         case "monitor":
             do {
                 try processor.start(monitor: true)
-                return "OK: monitor mode started (output to speakers)\n"
+                return jsonResponse(ok: true, message: "monitor mode started")
             } catch {
-                return "ERROR: \(error.localizedDescription)\n"
+                return jsonResponse(ok: false, error: error.localizedDescription)
             }
         case "stop":
             processor.stop()
-            return "OK: processing stopped\n"
+            return jsonResponse(ok: true, message: "processing stopped")
         case "status":
             let settings = processor.getSettings()
             if let data = try? JSONSerialization.data(withJSONObject: settings, options: .prettyPrinted),
                let json = String(data: data, encoding: .utf8) {
                 return json + "\n"
             }
-            return "ERROR: failed to serialize status\n"
+            return jsonResponse(ok: false, error: "failed to serialize status")
         case "set":
             return handleSet(parts: Array(parts.dropFirst()), processor: processor)
         default:
-            return "ERROR: unknown command '\(cmd)'. Available: start, stop, status, set\n"
+            return jsonResponse(ok: false, error: "unknown command '\(cmd)'")
         }
     }
 
     private func handleSet(parts: [String], processor: AudioProcessor) -> String {
-        guard parts.count >= 2 else { return "ERROR: usage: set <key> <value>\n" }
+        guard parts.count >= 2 else {
+            return jsonResponse(ok: false, error: "usage: set <key> <value>")
+        }
         let key = parts[0]
         let value = parts[1]
 
@@ -143,14 +160,14 @@ final class IPCServer {
         case "rnnoise-enabled":
             processor.rnnoiseEnabled = (value == "true" || value == "1")
         default:
-            return "ERROR: unknown key '\(key)'\n"
+            return jsonResponse(ok: false, error: "unknown key '\(key)'")
         }
 
         // Persist
         var settings = DenoiseSettings.load()
         settings.update(from: processor)
         settings.save()
-        return "OK: \(key) = \(value)\n"
+        return jsonResponse(ok: true, message: "\(key) = \(value)")
     }
 
     func stop() {

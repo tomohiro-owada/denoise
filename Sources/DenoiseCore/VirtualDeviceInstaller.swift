@@ -102,12 +102,17 @@ public enum VirtualDeviceInstaller {
             status = AudioObjectGetPropertyDataSize(device, &inputAddress, 0, nil, &bufferSize)
             guard status == noErr, bufferSize > 0 else { continue }
 
-            let bufferListPtr = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: 1)
-            defer { bufferListPtr.deallocate() }
+            // Allocate exact size returned by CoreAudio (handles multi-buffer devices)
+            let rawPtr = UnsafeMutableRawPointer.allocate(byteCount: Int(bufferSize), alignment: MemoryLayout<AudioBufferList>.alignment)
+            defer { rawPtr.deallocate() }
+            let bufferListPtr = rawPtr.bindMemory(to: AudioBufferList.self, capacity: 1)
             status = AudioObjectGetPropertyData(device, &inputAddress, 0, nil, &bufferSize, bufferListPtr)
             guard status == noErr else { continue }
 
-            let channelCount = bufferListPtr.pointee.mBuffers.mNumberChannels
+            // Sum channels across all buffers
+            let ablPtr = UnsafeMutableAudioBufferListPointer(bufferListPtr)
+            var channelCount: UInt32 = 0
+            for buf in ablPtr { channelCount += buf.mNumberChannels }
             guard channelCount > 0 else { continue }
 
             if let name = getDeviceName(device), let uid = getDeviceUID(device) {
@@ -172,9 +177,9 @@ public enum DenoiseError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .installationFailed:
-            return "BlackHole driver installation failed"
+            return "Virtual audio driver installation failed"
         case .virtualDeviceNotFound:
-            return "BlackHole virtual audio device not found"
+            return "Virtual audio device not found (install BlackHole or Denoise driver)"
         case .audioEngineError(let msg):
             return "Audio engine error: \(msg)"
         }
