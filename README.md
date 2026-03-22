@@ -1,105 +1,130 @@
 # Denoise
 
-macOS virtual microphone with real-time audio processing. Captures mic input, applies noise removal and audio effects, then outputs to a virtual audio device (Denoise 2ch / BlackHole 2ch) that Zoom, Meet, QuickTime etc. can select as a microphone.
+macOS用リアルタイム音声処理アプリ。マイク入力にノイズ除去・イコライザー・コンプレッサーなどをかけて、仮想オーディオデバイス経由で Zoom / Google Meet / QuickTime 等に「処理済みマイク」として提供します。
 
-## Audio Pipeline
+メニューバー常駐アプリ + CLI で操作可能。OSSのみで構成。
+
+## 音声処理パイプライン
 
 ```
-Mic → DeClicker → NoiseGate → RNNoise → RingBuffer → EQ → Compressor → Virtual Device (Denoise 2ch)
-      click/pop    silence      ML noise                    3-band   dynamics     ↓
-      removal      gating       suppression                 EQ       +5dB gain    Zoom / QuickTime / etc.
+マイク → DeClicker → NoiseGate → RNNoise → リングバッファ → EQ → Compressor → 仮想デバイス
+         クリック除去   無音カット    ML           (スレッド間)     3バンド  ダイナミクス    ↓
+         (突発音)      (閾値以下)   ノイズ除去                    イコライザ +5dBゲイン   Zoom等が読み取り
 ```
 
-## Requirements
+## 必要なもの
 
-- macOS 14+
-- Virtual audio device: `brew install blackhole-2ch` (or custom Denoise driver)
-- Reboot after installing the virtual audio device
+- macOS 14 以上
+- 仮想オーディオデバイス: `brew install blackhole-2ch`
+- インストール後に **OS再起動**
 
-## Build
+## ビルド
 
 ```bash
 swift build
 ```
 
-Produces two binaries:
-- `.build/debug/DenoiseApp` — Menu bar app
-- `.build/debug/denoise` — CLI tool
+2つのバイナリが生成されます:
 
-## Setup
+| バイナリ | 説明 |
+|---------|------|
+| `.build/debug/DenoiseApp` | メニューバー常駐アプリ |
+| `.build/debug/denoise` | CLIツール |
 
-1. Install virtual audio device: `brew install blackhole-2ch`
-2. Reboot
-3. Launch: `.build/debug/DenoiseApp`
-4. In Zoom/Meet/QuickTime: select **BlackHole 2ch** (or **Denoise 2ch**) as input microphone
-5. In macOS System Settings → Sound → Input: keep your real microphone selected (NOT BlackHole/Denoise)
+## セットアップ
 
-## CLI Usage
+1. 仮想オーディオデバイスをインストール
+   ```bash
+   brew install blackhole-2ch
+   ```
+2. **OS を再起動**
+3. アプリを起動
+   ```bash
+   .build/debug/DenoiseApp
+   ```
+4. Zoom / Meet / QuickTime の入力デバイスに **「BlackHole 2ch」** を選択
+5. **重要**: macOS のシステム設定 → サウンド → 入力 は **実際のマイク** のままにすること（BlackHole/Denoise を選ぶとフィードバックループになります）
 
-The CLI controls the menu bar app via Unix domain socket (`/tmp/denoise.sock`). The app must be running.
+## メニューバーアプリ
 
-### Commands
+メニューバーのアイコンをクリックするとポップオーバーが開きます:
+
+- **Processing トグル** — 音声処理の ON/OFF
+- **Monitor トグル** — スピーカーから処理済みの音を確認（遅延付き、テスト用）
+- **Delay スライダー** — モニター時の遅延秒数（0〜10秒）
+- **Input Device** — 入力マイク選択
+- **各エフェクトの設定** — Noise Gate / EQ / Compressor / RNNoise
+- **Reset** — 全パラメータを初期値に戻す
+- **Save Default** — 現在の設定をプリセットとして保存
+- **Set Default** — 保存したプリセットを呼び出し
+
+## CLI の使い方
+
+CLI はメニューバーアプリと Unix ドメインソケット (`/tmp/denoise.sock`) で通信します。**アプリが起動している必要があります。**
+
+### コマンド一覧
 
 ```bash
-denoise                  # Show current status (default command)
-denoise start            # Start processing (mic → virtual device)
-denoise stop             # Stop processing
-denoise monitor          # Start in monitor mode (output to speakers with delay, for testing)
-denoise status           # Show all settings as JSON
-denoise devices          # List available input microphones
-denoise install          # Check virtual audio device installation
-denoise config KEY VALUE # Set a configuration value
+denoise                  # 現在の状態を表示（デフォルト）
+denoise start            # 処理開始（マイク → 仮想デバイス）
+denoise stop             # 処理停止
+denoise monitor          # モニターモード（スピーカーに遅延出力、テスト用）
+denoise status           # 全設定を JSON で表示
+denoise devices          # 利用可能なマイク一覧
+denoise devices --json   # JSON で一覧出力
+denoise install          # 仮想オーディオデバイスのインストール状況
+denoise install --json   # JSON で出力
+denoise config KEY VALUE # 設定値を変更（即時反映・永続化）
+denoise schema           # CLI の全仕様を JSON で出力（AI エージェント向け）
 ```
 
-### Configuration Keys
+### 設定キー
 
-All config changes take effect immediately and are persisted.
+設定変更は**即座に反映**され、アプリ再起動後も保持されます。
 
-| Key | Type | Default | Range | Description |
-|-----|------|---------|-------|-------------|
-| `declicker-enabled` | bool | `true` | `true`/`false` | Enable click/pop removal |
-| `declicker-sensitivity` | float | `4.0` | 1.0–10.0 | Higher = more aggressive click detection |
-| `noise-gate-enabled` | bool | `true` | `true`/`false` | Enable noise gate |
-| `noise-gate-threshold` | float | `-45.0` | -90.0–0.0 (dB) | Audio below this level is silenced |
-| `eq-enabled` | bool | `true` | `true`/`false` | Enable 3-band equalizer |
-| `eq-low` | float | `0.0` | -12.0–12.0 (dB) | Low shelf gain (200 Hz) |
-| `eq-mid` | float | `0.0` | -12.0–12.0 (dB) | Parametric mid gain (1 kHz) |
-| `eq-high` | float | `0.0` | -12.0–12.0 (dB) | High shelf gain (4 kHz) |
-| `compressor-enabled` | bool | `true` | `true`/`false` | Enable dynamics compressor |
-| `compressor-threshold` | float | `-20.0` | -60.0–0.0 (dB) | Compression starts above this level |
-| `compressor-ratio` | float | `4.0` | 1.0–20.0 | Compression ratio (higher = more compression) |
-| `rnnoise-enabled` | bool | `true` | `true`/`false` | Enable ML-based noise suppression |
+| キー | 型 | デフォルト | 範囲 | 説明 |
+|------|------|-----------|------|------|
+| `declicker-enabled` | bool | `true` | `true`/`false` | クリック・ポップ音の除去 |
+| `declicker-sensitivity` | float | `4.0` | 1.0〜10.0 | 感度（高い＝より積極的に検出） |
+| `noise-gate-enabled` | bool | `true` | `true`/`false` | ノイズゲート |
+| `noise-gate-threshold` | float | `-45.0` | -90.0〜0.0 (dB) | この音量以下をカット |
+| `eq-enabled` | bool | `true` | `true`/`false` | 3バンドイコライザー |
+| `eq-low` | float | `0.0` | -12.0〜12.0 (dB) | 低音ゲイン（200 Hz） |
+| `eq-mid` | float | `0.0` | -12.0〜12.0 (dB) | 中音ゲイン（1 kHz） |
+| `eq-high` | float | `0.0` | -12.0〜12.0 (dB) | 高音ゲイン（4 kHz） |
+| `compressor-enabled` | bool | `true` | `true`/`false` | ダイナミクスコンプレッサー |
+| `compressor-threshold` | float | `-20.0` | -60.0〜0.0 (dB) | 圧縮開始レベル |
+| `compressor-ratio` | float | `4.0` | 1.0〜20.0 | 圧縮比（高い＝より強く圧縮） |
+| `rnnoise-enabled` | bool | `true` | `true`/`false` | MLベースのノイズ除去 |
 
-### Examples
+### 設定例
 
 ```bash
-# Basic usage
-denoise start                              # Start with all defaults
-denoise stop                               # Stop processing
+# 基本操作
+denoise start                              # 処理開始
+denoise stop                               # 処理停止
 
-# Monitor your processed voice through speakers (with 1s delay to avoid feedback)
+# モニターモードで確認（ヘッドフォン推奨、スピーカーだとハウリングする）
 denoise monitor
 
-# Adjust noise gate (use -- for negative values)
+# ノイズゲートの閾値調整（負の値は -- を前につける）
 denoise config -- noise-gate-threshold -35
 
-# Boost low frequencies
+# 低音をブースト
 denoise config eq-low 6
 
-# Aggressive compression for consistent volume
+# 強めのコンプレッサーで音量を均一に
 denoise config -- compressor-threshold -30
 denoise config compressor-ratio 8
 
-# Disable RNNoise if it's too aggressive
+# RNNoise が効きすぎる場合はオフに
 denoise config rnnoise-enabled false
 
-# Check what's running
+# 現在の設定を確認
 denoise status
 ```
 
-### Status Output
-
-`denoise status` returns JSON:
+### ステータス出力例
 
 ```json
 {
@@ -114,19 +139,65 @@ denoise status
 }
 ```
 
-## Architecture
+## AI エージェント連携
 
-- **DenoiseCore** — Audio processing logic (AudioProcessor, NoiseGate, DeClicker, RNNoiseWrapper, VirtualDeviceInstaller)
-- **DenoiseApp** — SwiftUI menu bar app with IPC server
-- **DenoiseCLI** — Command-line interface via ArgumentParser
-- **CRNNoise** — RNNoise C library (BSD-3, statically linked)
+AI エージェントからの操作に対応しています。
 
-Two-engine design:
-- **inputEngine**: Captures from hardware mic, applies DSP (DeClicker → NoiseGate → RNNoise), writes to ring buffer
-- **outputEngine**: Reads ring buffer, applies EQ and Compressor via AudioUnits, outputs to virtual audio device
+```bash
+# 仕様をJSON で取得（コマンド・設定キーの型・デフォルト・範囲を含む）
+denoise schema
 
-## License
+# デバイス一覧をJSON で取得
+denoise devices --json
 
-- Project code: See LICENSE
-- RNNoise: BSD-3-Clause (xiph.org)
-- BlackHole: GPL-3.0 (installed separately, not bundled)
+# 状態をJSON で確認
+denoise status
+```
+
+詳細は [AGENTS.md](AGENTS.md) を参照してください。
+
+## アーキテクチャ
+
+```
+denoise/
+├── Sources/
+│   ├── CRNNoise/          # RNNoise C ライブラリ（静的リンク）
+│   ├── DenoiseCore/       # 音声処理ロジック
+│   │   ├── AudioProcessor   # メインパイプライン（2エンジン構成）
+│   │   ├── DeClicker        # クリック除去（突発音検出＋補間）
+│   │   ├── NoiseGate        # ノイズゲート（エンベロープ追従）
+│   │   ├── RNNoiseWrapper   # RNNoise C ライブラリのSwiftラッパー
+│   │   └── VirtualDeviceInstaller  # 仮想デバイスの検出・管理
+│   ├── DenoiseApp/        # SwiftUI メニューバーアプリ + IPC サーバー
+│   └── DenoiseCLI/        # CLI ツール（ArgumentParser）
+├── Resources/             # アプリアイコン
+├── AGENTS.md              # AI エージェント向けガイド
+└── README.md
+```
+
+### 2エンジン設計
+
+| エンジン | 役割 |
+|---------|------|
+| **inputEngine** | ハードウェアマイクからキャプチャ → DSP 処理 (DeClicker → NoiseGate → RNNoise) → リングバッファに書き込み |
+| **outputEngine** | リングバッファから読み出し → EQ → Compressor (Apple AudioUnit) → 仮想オーディオデバイスに出力 |
+
+スレッド安全なリングバッファで2つのエンジンを接続。入力エンジンの出力はミュートされるため、スピーカーへの音漏れはありません。
+
+## 使用技術
+
+| 技術 | 用途 | ライセンス |
+|------|------|-----------|
+| Swift / SwiftUI | アプリ本体 | — |
+| AVAudioEngine | オーディオキャプチャ・ルーティング | — |
+| AVAudioUnitEQ | 3バンドイコライザー | — |
+| kAudioUnitSubType_DynamicsProcessor | コンプレッサー | — |
+| [RNNoise](https://github.com/xiph/rnnoise) | MLベースノイズ除去 | BSD-3-Clause |
+| [BlackHole](https://github.com/ExistentialAudio/BlackHole) | 仮想オーディオデバイス（別途インストール） | GPL-3.0 |
+| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | CLI フレームワーク | Apache-2.0 |
+
+## ライセンス
+
+- プロジェクトコード: MIT（予定）
+- RNNoise: BSD-3-Clause（xiph.org）
+- BlackHole: GPL-3.0（同梱せず、別途インストール）
