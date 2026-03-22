@@ -83,7 +83,8 @@ public final class AudioProcessor: ObservableObject {
     @Published public var compressorRatio: Float = 4.0
     @Published public var monitorDelaySeconds: Float = 1.0
 
-    private var rnnoiseBuffer: [Float] = []
+    private var rnnoiseInputBuffer: [Float] = []
+    private var rnnoiseOutputBuffer: [Float] = []
     private let rnnoiseFrameSize: Int
 
     public init() {
@@ -160,7 +161,8 @@ public final class AudioProcessor: ObservableObject {
 
         // Ring buffer
         ringBuffer = AudioRingBuffer(capacity: Int(sampleRate) * 2)
-        rnnoiseBuffer.removeAll()
+        rnnoiseInputBuffer.removeAll()
+        rnnoiseOutputBuffer.removeAll()
 
         // --- Output Engine: reads ring buffer, applies EQ/compressor, outputs to virtual device ---
         outputEngine = AVAudioEngine()
@@ -283,31 +285,32 @@ public final class AudioProcessor: ObservableObject {
     }
 
     private func applyRNNoise(_ mono: inout [Float], rnnoise: RNNoiseProcessor, frameSize: Int) {
-        // Accumulate into persistent buffer (scaled to RNNoise range)
+        // Accumulate input (scaled to RNNoise range)
         for i in 0..<mono.count {
-            rnnoiseBuffer.append(mono[i] * 32768.0)
+            rnnoiseInputBuffer.append(mono[i] * 32768.0)
         }
 
-        // Process complete frames and collect output
-        var processed = [Float]()
-        processed.reserveCapacity(mono.count)
-        while rnnoiseBuffer.count >= frameSize {
-            var frame = Array(rnnoiseBuffer.prefix(frameSize))
-            rnnoiseBuffer.removeFirst(frameSize)
+        // Process all complete frames → append to output buffer
+        while rnnoiseInputBuffer.count >= frameSize {
+            var frame = Array(rnnoiseInputBuffer.prefix(frameSize))
+            rnnoiseInputBuffer.removeFirst(frameSize)
             rnnoise.processFrame(&frame)
             for j in 0..<frameSize {
-                processed.append(frame[j] / 32768.0)
+                rnnoiseOutputBuffer.append(frame[j] / 32768.0)
             }
         }
 
-        // Write processed samples back; zero any remainder (don't leak raw audio)
-        for i in 0..<mono.count {
-            if i < processed.count {
-                mono[i] = processed[i]
-            } else {
-                mono[i] = 0
-            }
+        // Drain output buffer into mono (exactly mono.count samples)
+        let available = min(mono.count, rnnoiseOutputBuffer.count)
+        for i in 0..<available {
+            mono[i] = rnnoiseOutputBuffer[i]
         }
+        // Zero-fill if not enough output yet (startup only)
+        for i in available..<mono.count {
+            mono[i] = 0
+        }
+        // Remove consumed samples, keep the rest for next callback
+        rnnoiseOutputBuffer.removeFirst(available)
     }
 
     public func stop() {
@@ -326,7 +329,8 @@ public final class AudioProcessor: ObservableObject {
         outputEngine = nil
         sourceNode = nil; eq = nil; compressor = nil; delayNode = nil
         ringBuffer = nil
-        rnnoiseBuffer.removeAll()
+        rnnoiseInputBuffer.removeAll()
+        rnnoiseOutputBuffer.removeAll()
         isRunning = false
         isMonitorMode = false
         inputLevel = 0; outputLevel = 0
