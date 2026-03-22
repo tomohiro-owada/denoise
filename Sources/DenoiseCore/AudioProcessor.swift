@@ -83,7 +83,8 @@ public final class AudioProcessor: ObservableObject {
     @Published public var compressorRatio: Float = 4.0
     @Published public var monitorDelaySeconds: Float = 1.0
 
-    private var rnnoiseBuffer: [Float] = []
+    private var rnnoiseInputBuffer: [Float] = []
+    private var rnnoiseOutputBuffer: [Float] = []
     private let rnnoiseFrameSize: Int
 
     public init() {
@@ -119,13 +120,8 @@ public final class AudioProcessor: ObservableObject {
     }
 
     public func updateCompressor() {
-        guard let compressor = compressor else { return }
-        let au = compressor.audioUnit
-        let headRoom = max(0.1, abs(compressorThreshold) / max(compressorRatio, 1.0))
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold, kAudioUnitScope_Global, 0, compressorThreshold, 0)
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom, kAudioUnitScope_Global, 0, headRoom, 0)
-        AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain, kAudioUnitScope_Global, 0, 5.0, 0)
-        compressor.bypass = !compressorEnabled
+        guard compressor != nil else { return }
+        setupCompressorParams()
     }
 
     // MARK: - Start / Stop
@@ -165,7 +161,8 @@ public final class AudioProcessor: ObservableObject {
 
         // Ring buffer
         ringBuffer = AudioRingBuffer(capacity: Int(sampleRate) * 2)
-        rnnoiseBuffer.removeAll()
+        rnnoiseInputBuffer.removeAll()
+        rnnoiseOutputBuffer.removeAll()
 
         // --- Output Engine: reads ring buffer, applies EQ/compressor, outputs to virtual device ---
         outputEngine = AVAudioEngine()
@@ -288,20 +285,32 @@ public final class AudioProcessor: ObservableObject {
     }
 
     private func applyRNNoise(_ mono: inout [Float], rnnoise: RNNoiseProcessor, frameSize: Int) {
+        // Accumulate input (scaled to RNNoise range)
         for i in 0..<mono.count {
-            rnnoiseBuffer.append(mono[i] * 32768.0)
+            rnnoiseInputBuffer.append(mono[i] * 32768.0)
         }
-        var outputOffset = 0
-        while rnnoiseBuffer.count >= frameSize && outputOffset < mono.count {
-            var frame = Array(rnnoiseBuffer.prefix(frameSize))
-            rnnoiseBuffer.removeFirst(frameSize)
+
+        // Process all complete frames → append to output buffer
+        while rnnoiseInputBuffer.count >= frameSize {
+            var frame = Array(rnnoiseInputBuffer.prefix(frameSize))
+            rnnoiseInputBuffer.removeFirst(frameSize)
             rnnoise.processFrame(&frame)
-            let samplesToWrite = min(frameSize, mono.count - outputOffset)
-            for j in 0..<samplesToWrite {
-                mono[outputOffset + j] = frame[j] / 32768.0
+            for j in 0..<frameSize {
+                rnnoiseOutputBuffer.append(frame[j] / 32768.0)
             }
-            outputOffset += samplesToWrite
         }
+
+        // Drain output buffer into mono (exactly mono.count samples)
+        let available = min(mono.count, rnnoiseOutputBuffer.count)
+        for i in 0..<available {
+            mono[i] = rnnoiseOutputBuffer[i]
+        }
+        // Zero-fill if not enough output yet (startup only)
+        for i in available..<mono.count {
+            mono[i] = 0
+        }
+        // Remove consumed samples, keep the rest for next callback
+        rnnoiseOutputBuffer.removeFirst(available)
     }
 
     public func stop() {
@@ -320,7 +329,8 @@ public final class AudioProcessor: ObservableObject {
         outputEngine = nil
         sourceNode = nil; eq = nil; compressor = nil; delayNode = nil
         ringBuffer = nil
-        rnnoiseBuffer.removeAll()
+        rnnoiseInputBuffer.removeAll()
+        rnnoiseOutputBuffer.removeAll()
         isRunning = false
         isMonitorMode = false
         inputLevel = 0; outputLevel = 0

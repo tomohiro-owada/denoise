@@ -3,14 +3,14 @@ import AVFoundation
 
 /// Simple noise gate that mutes audio below a threshold
 public final class NoiseGate: @unchecked Sendable {
-    public var thresholdDB: Float = -40.0
+    public var thresholdDB: Float = -45.0
     public var attackTime: Float = 0.001   // seconds
     public var releaseTime: Float = 0.05   // seconds
     public var isEnabled: Bool = true
 
     private var envelope: Float = 0.0
 
-    public init(thresholdDB: Float = -40.0) {
+    public init(thresholdDB: Float = -45.0) {
         self.thresholdDB = thresholdDB
     }
 
